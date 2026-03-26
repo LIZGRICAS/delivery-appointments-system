@@ -6,24 +6,139 @@ Aplicación web fullstack para gestionar citas de entrega de mercancía en una e
 
 ---
 
-## Diagrama de Arquitectura
+## 📂 Estructura Actual (Layered)
 
-```
-[ Browser (Next.js 14) ]
-        |
-        | HTTP/JSON + JWT Bearer
-        v
-[ API REST (Django DRF) :8000 ]
-        |
-        | Django ORM / SQL nativo
-        v
-[ PostgreSQL :5432 ]
+```bash
+sistema-de-gestión-de-citas-de-entrega/
+├── backend/                        # Capa de negocio y datos
+│   ├── apps/
+│   │   ├── authentication/         # Autenticación JWT
+│   │   │   ├── views.py            # LoginView, LogoutView
+│   │   │   └── urls.py
+│   │   └── appointments/           # Dominio principal
+│   │       ├── models.py           # Modelo Appointment (UUID, choices, índices)
+│   │       ├── serializers.py      # Validaciones de negocio
+│   │       ├── views.py            # CRUD + reporte SQL nativo
+│   │       ├── urls.py
+│   │       ├── tests.py            # 5 pruebas unitarias
+│   │       ├── migrations/
+│   │       └── management/
+│   │           └── commands/
+│   │               └── seed_data.py
+│   ├── core/
+│   │   ├── settings.py             # Configuración central
+│   │   ├── urls.py                 # Rutas raíz + Swagger
+│   │   └── wsgi.py
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   ├── entrypoint.sh               # migrate + seed + runserver
+│   └── .flake8
+│
+├── frontend/                       # Capa de presentación
+│   └── src/
+│       ├── app/
+│       │   ├── layout.tsx          # Layout raíz con Inter font
+│       │   ├── page.tsx            # Dashboard
+│       │   ├── login/page.tsx      # Login con JWT
+│       │   ├── appointments/
+│       │   │   ├── page.tsx        # Listado + filtros + paginación
+│       │   │   ├── new/page.tsx    # Crear cita
+│       │   │   └── [id]/edit/      # Editar cita
+│       │   ├── reports/page.tsx    # Reporte + gráfico Recharts
+│       │   └── components/
+│       │       ├── AppShell.tsx    # Layout con sidebar responsive
+│       │       ├── Sidebar.tsx     # Navegación lateral
+│       │       └── AppointmentForm.tsx
+│       ├── lib/
+│       │   └── api.ts              # Axios + interceptores JWT
+│       └── middleware.ts           # Protección de rutas Next.js
+│
+├── docker-compose.yml              # PostgreSQL + backend + frontend
+├── .env.example
+└── README.md
 ```
 
-Separación de capas:
-- Presentación: Next.js 14 App Router + Tailwind CSS
-- Negocio: Django REST Framework — validaciones en Serializers, lógica en ViewSets
-- Datos: PostgreSQL con índices en campos de filtrado frecuente
+---
+
+## 🏗️ Diagrama de Arquitectura
+
+```mermaid
+graph TD
+    subgraph Cliente["🖥️ Cliente (Next.js 14)"]
+        A[Login Page] --> B[Middleware JWT]
+        B --> C[Dashboard]
+        B --> D[Lista de Citas]
+        B --> E[Crear / Editar Cita]
+        B --> F[Reportes]
+    end
+
+    subgraph API["⚙️ API REST (Django DRF :8000)"]
+        G[/api/auth/login/] --> H[SimpleJWT]
+        I[/api/appointments/] --> J[AppointmentViewSet]
+        J --> K[Serializer — Validaciones]
+        L[/api/appointments/report/] --> M[SQL Nativo]
+        N[/api/docs/] --> O[Swagger UI]
+    end
+
+    subgraph DB["🗄️ Base de Datos (PostgreSQL :5432)"]
+        P[(auth_user)]
+        Q[(appointments_appointment)]
+    end
+
+    Cliente -->|HTTP/JSON + Bearer Token| API
+    K --> Q
+    M --> Q
+    H --> P
+    Q -->|FK created_by| P
+```
+
+---
+
+## 🔄 El flujo de la app
+
+```mermaid
+sequenceDiagram
+    actor U as Usuario
+    participant F as Frontend (Next.js)
+    participant M as Middleware
+    participant A as API (Django)
+    participant DB as PostgreSQL
+
+    U->>F: Accede a /dashboard
+    F->>M: Verifica cookie access_token
+    alt Sin token
+        M-->>F: Redirige a /login
+        U->>F: Ingresa usuario y contraseña
+        F->>A: POST /api/auth/login/
+        A->>DB: Valida credenciales
+        DB-->>A: Usuario válido
+        A-->>F: { access, refresh }
+        F->>F: Guarda tokens en localStorage + cookie
+        F-->>U: Redirige a /dashboard
+    end
+
+    F->>A: GET /api/appointments/ + Bearer token
+    A->>A: Verifica JWT (IsAuthenticated)
+    A->>DB: SELECT con filtros e índices
+    DB-->>A: Resultados paginados
+    A-->>F: { count, results[] }
+    F-->>U: Renderiza tabla de citas
+
+    U->>F: Crea nueva cita
+    F->>A: POST /api/appointments/
+    A->>A: Serializer valida fecha, estado, delivered_at
+    A->>DB: INSERT appointment
+    DB-->>A: OK
+    A-->>F: 201 Created
+    F-->>U: Redirige a listado
+
+    U->>F: Solicita reporte
+    F->>A: GET /api/appointments/report/?date_from=&date_to=
+    A->>DB: SQL nativo — AVG EXTRACT EPOCH GROUP BY product_line
+    DB-->>A: [ { product_line, total, avg_hours, avg_minutes } ]
+    A-->>F: JSON con promedios
+    F-->>U: Tabla + gráfico de barras (Recharts)
+```
 
 ---
 
